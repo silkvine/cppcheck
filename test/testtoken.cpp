@@ -58,6 +58,7 @@ private:
         TEST_CASE(multiCompare5);
         TEST_CASE(getStrLength);
         TEST_CASE(getStrSize);
+        TEST_CASE(getCharAt);
         TEST_CASE(strValue);
 
         TEST_CASE(deleteLast);
@@ -105,6 +106,8 @@ private:
         TEST_CASE(findClosingBracket);
 
         TEST_CASE(expressionString);
+
+        TEST_CASE(hasKnownIntValue);
     }
 
     void nextprevious() const {
@@ -294,6 +297,9 @@ private:
     void getStrSize() const {
         Token tok;
 
+        tok.str("\"\"");
+        ASSERT_EQUALS(sizeof(""), Token::getStrSize(&tok));
+
         tok.str("\"abc\"");
         ASSERT_EQUALS(sizeof("abc"), Token::getStrSize(&tok));
 
@@ -302,6 +308,28 @@ private:
 
         tok.str("\"\\\\\"");
         ASSERT_EQUALS(sizeof("\\"), Token::getStrSize(&tok));
+    }
+
+    void getCharAt() const {
+        Token tok;
+
+        tok.str("\"asdf\"");
+        ASSERT_EQUALS("a", Token::getCharAt(&tok, 0));
+        ASSERT_EQUALS("s", Token::getCharAt(&tok, 1));
+
+        tok.str("\"a\\ts\"");
+        ASSERT_EQUALS("\\t", Token::getCharAt(&tok, 1));
+
+        tok.str("\"\"");
+        ASSERT_EQUALS("\\0", Token::getCharAt(&tok, 0));
+
+        tok.str("L\"a\\ts\"");
+        ASSERT_EQUALS("a", Token::getCharAt(&tok, 0));
+        ASSERT_EQUALS("\\t", Token::getCharAt(&tok, 1));
+
+        tok.str("u\"a\\ts\"");
+        ASSERT_EQUALS("\\t", Token::getCharAt(&tok, 1));
+        ASSERT_EQUALS("s", Token::getCharAt(&tok, 2));
     }
 
     void strValue() const {
@@ -328,11 +356,16 @@ private:
         tok.str("\"a\\0\"");
         ASSERT_EQUALS("a", tok.strValue());
 
+        tok.str("L\"a\\t\"");
+        ASSERT_EQUALS("a\t", tok.strValue());
+
+        tok.str("U\"a\\0\"");
+        ASSERT_EQUALS("a", tok.strValue());
     }
 
 
     void deleteLast() const {
-        TokensFrontBack listEnds{ 0 };
+        TokensFrontBack listEnds{ nullptr };
         Token ** const tokensBack = &(listEnds.back);
         Token tok(&listEnds);
         tok.insertToken("aba");
@@ -342,7 +375,7 @@ private:
     }
 
     void deleteFirst() const {
-        TokensFrontBack listEnds{ 0 };
+        TokensFrontBack listEnds{ nullptr };
         Token ** const tokensFront = &(listEnds.front);
         Token tok(&listEnds);
 
@@ -359,7 +392,7 @@ private:
         ASSERT_EQUALS(true, Token::simpleMatch(example1.tokens()->tokAt(4)->nextArgument(), "3 , 4"));
 
         givenACodeSampleToTokenize example2("foo();");
-        ASSERT_EQUALS(true, example2.tokens()->tokAt(2)->nextArgument() == 0);
+        ASSERT_EQUALS(true, example2.tokens()->tokAt(2)->nextArgument() == nullptr);
 
         givenACodeSampleToTokenize example3("foo(bar(a, b), 2, 3);");
         ASSERT_EQUALS(true, Token::simpleMatch(example3.tokens()->tokAt(2)->nextArgument(), "2 , 3"));
@@ -371,7 +404,7 @@ private:
     void eraseTokens() const {
         givenACodeSampleToTokenize code("begin ; { this code will be removed } end", true);
         Token::eraseTokens(code.tokens()->next(), code.tokens()->tokAt(9));
-        ASSERT_EQUALS("begin ; end", code.tokens()->stringifyList(0, false));
+        ASSERT_EQUALS("begin ; end", code.tokens()->stringifyList(nullptr, false));
     }
 
 
@@ -471,7 +504,7 @@ private:
         givenACodeSampleToTokenize var("int a ; int b ;");
 
         // Varid == 0 should throw exception
-        ASSERT_THROW(Token::Match(var.tokens(), "%type% %varid% ; %type% %name%", 0),InternalError);
+        ASSERT_THROW((void)Token::Match(var.tokens(), "%type% %varid% ; %type% %name%", 0),InternalError);
 
         ASSERT_EQUALS(true, Token::Match(var.tokens(), "%type% %varid% ; %type% %name%", 1));
         ASSERT_EQUALS(true, Token::Match(var.tokens(), "%type% %name% ; %type% %varid%", 2));
@@ -800,14 +833,14 @@ private:
 
     void isStandardType() const {
         std::vector<std::string> standard_types;
-        standard_types.push_back("bool");
-        standard_types.push_back("char");
-        standard_types.push_back("short");
-        standard_types.push_back("int");
-        standard_types.push_back("long");
-        standard_types.push_back("float");
-        standard_types.push_back("double");
-        standard_types.push_back("size_t");
+        standard_types.emplace_back("bool");
+        standard_types.emplace_back("char");
+        standard_types.emplace_back("short");
+        standard_types.emplace_back("int");
+        standard_types.emplace_back("long");
+        standard_types.emplace_back("float");
+        standard_types.emplace_back("double");
+        standard_types.emplace_back("size_t");
 
         std::vector<std::string>::const_iterator test_op, test_ops_end = standard_types.end();
         for (test_op = standard_types.begin(); test_op != test_ops_end; ++test_op) {
@@ -905,7 +938,7 @@ private:
     void canFindMatchingBracketsInnerPair() const {
         givenACodeSampleToTokenize var("std::deque<std::set<int> > intsets;");
 
-        const Token * const t = const_cast<Token*>(var.tokens()->tokAt(7))->findClosingBracket();
+        const Token * const t = var.tokens()->tokAt(7)->findClosingBracket();
         ASSERT_EQUALS(">", t->str());
         ASSERT(var.tokens()->tokAt(9) == t);
     }
@@ -954,6 +987,24 @@ private:
 
         givenACodeSampleToTokenize data3("return (t){1,2};");
         ASSERT_EQUALS("return(t){1,2}", data3.tokens()->expressionString());
+
+        givenACodeSampleToTokenize data4("return L\"a\";");
+        ASSERT_EQUALS("returnL\"a\"", data4.tokens()->expressionString());
+    }
+
+    void hasKnownIntValue() {
+        // pointer might be NULL
+        ValueFlow::Value v1(0);
+
+        // pointer points at buffer that is 2 bytes
+        ValueFlow::Value v2(2);
+        v2.valueType = ValueFlow::Value::BUFFER_SIZE;
+        v2.setKnown();
+
+        Token token;
+        ASSERT_EQUALS(true, token.addValue(v1));
+        ASSERT_EQUALS(true, token.addValue(v2));
+        ASSERT_EQUALS(false, token.hasKnownIntValue());
     }
 };
 

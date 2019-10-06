@@ -45,6 +45,8 @@ private:
         settings.experimental = true;
 
         // don't freak out when the syntax is wrong
+
+        TEST_CASE(final_class_x);
         TEST_CASE(wrong_syntax1);
         TEST_CASE(wrong_syntax2);
         TEST_CASE(wrong_syntax3); // #3544
@@ -152,7 +154,7 @@ private:
         TEST_CASE(garbageCode110);
         TEST_CASE(garbageCode111);
         TEST_CASE(garbageCode112);
-        TEST_CASE(garbageCode114);
+        TEST_CASE(garbageCode114); // #2118
         TEST_CASE(garbageCode115); // #5506
         TEST_CASE(garbageCode116); // #5356
         TEST_CASE(garbageCode117); // #6121
@@ -234,6 +236,8 @@ private:
         TEST_CASE(garbageCode201); // #8873
         TEST_CASE(garbageCode202); // #8907
         TEST_CASE(garbageCode203); // #8972
+        TEST_CASE(garbageCode204);
+        TEST_CASE(garbageCode205);
 
         TEST_CASE(garbageCodeFuzzerClientMode1); // test cases created with the fuzzer client, mode 1
 
@@ -245,6 +249,7 @@ private:
         TEST_CASE(syntaxErrorLastToken); // Make sure syntax errors are detected and reported
         TEST_CASE(syntaxErrorCase);
         TEST_CASE(syntaxErrorFuzzerCliType1);
+        TEST_CASE(cliCode);
         TEST_CASE(enumTrailingComma);
 
         TEST_CASE(nonGarbageCode1); // #8346
@@ -279,7 +284,7 @@ private:
 
         tokenizer.simplifyTokenList2();
 
-        return tokenizer.tokens()->stringifyList(false, false, false, true, false, 0, 0);
+        return tokenizer.tokens()->stringifyList(false, false, false, true, false, nullptr, nullptr);
     }
 
     std::string getSyntaxError(const char code[]) {
@@ -293,6 +298,20 @@ private:
             return "[test.cpp:" + MathLib::toString(e.token->linenr()) + "] " + e.errorMessage;
         }
         return "";
+    }
+
+
+    void final_class_x() {
+
+        const char code[] = "class __declspec(dllexport) x final { };";
+        {
+            errout.str("");
+            Tokenizer tokenizer(&settings, this);
+            std::istringstream istr(code);
+            tokenizer.tokenize(istr, "test.cpp");
+            tokenizer.simplifyTokenList2();
+            ASSERT_EQUALS("", errout.str());
+        }
     }
 
     void wrong_syntax1() {
@@ -324,6 +343,7 @@ private:
         // don't segfault..
         ASSERT_THROW(checkCode(code), InternalError);
     }
+
 
     void wrong_syntax3() {   // #3544
         const char code[] = "X #define\n"
@@ -679,7 +699,7 @@ private:
     }
 
     void garbageCode58() { // #6732, #6762
-        checkCode("{ }> {= ~A()^{} }P { }");
+        ASSERT_THROW(checkCode("{ }> {= ~A()^{} }P { }"), InternalError);
         ASSERT_THROW(checkCode("{= ~A()^{} }P { } { }> is"), InternalError);
     }
 
@@ -839,9 +859,9 @@ private:
 
     void garbageCode101() { // #6835
         // Reported case
-        checkCode("template < class , =( , int) X = 1 > struct A { } ( ) { = } [ { } ] ( ) { A < void > 0 }");
+        ASSERT_THROW(checkCode("template < class , =( , int) X = 1 > struct A { } ( ) { = } [ { } ] ( ) { A < void > 0 }"), InternalError);
         // Reduced case
-        checkCode("template < class =( , ) X = 1> struct A {}; A<void> a;");
+        ASSERT_THROW(checkCode("template < class =( , ) X = 1> struct A {}; A<void> a;"), InternalError);
     }
 
     void garbageCode102() { // #6846
@@ -889,10 +909,10 @@ private:
     }
 
     void garbageCode114() { // #2118
-        ASSERT_THROW(checkCode("Q_GLOBAL_STATIC_WITH_INITIALIZER(Qt4NodeStaticData, qt4NodeStaticData, {\n"
-                               "    for (unsigned i = 0 ; i < count; i++) {\n"
-                               "    }\n"
-                               "});"), InternalError);
+        checkCode("Q_GLOBAL_STATIC_WITH_INITIALIZER(Qt4NodeStaticData, qt4NodeStaticData, {\n"
+                  "    for (unsigned i = 0 ; i < count; i++) {\n"
+                  "    }\n"
+                  "});");
     }
 
     void garbageCode115() { // #5506
@@ -1153,19 +1173,19 @@ private:
     }
 
     void garbageCode147() { // #7082
-        checkCode("free(3();\n"
-                  "$  vWrongAllocp1) test1<int, -!>() ^ {\n"
-                  "    int *p<ynew int[n];\n"
-                  "    delete[]p;\n"
-                  "    int *p1 = (int*)malloc(n*sizeof(int));\n"
-                  "    free(p1);\n"
-                  "}\n"
-                  "void est2() {\n"
-                  "    for (int ui = 0; ui < 1z; ui++)\n"
-                  "        ;\n"
-                  "}");
+        ASSERT_THROW(checkCode("free(3();\n"
+                               "$  vWrongAllocp1) test1<int, -!>() ^ {\n"
+                               "    int *p<ynew int[n];\n"
+                               "    delete[]p;\n"
+                               "    int *p1 = (int*)malloc(n*sizeof(int));\n"
+                               "    free(p1);\n"
+                               "}\n"
+                               "void est2() {\n"
+                               "    for (int ui = 0; ui < 1z; ui++)\n"
+                               "        ;\n"
+                               "}"), InternalError);
 
-        checkCode("; void f ^ { return } int main ( ) { }"); // #4941
+        ASSERT_THROW(checkCode("; void f ^ { return } int main ( ) { }"), InternalError); // #4941
     }
 
     void garbageCode148() { // #7090
@@ -1414,7 +1434,7 @@ private:
 
     void garbageCode170() {
         // 7255
-        checkCode("d i(){{f*s=typeid(()0,)}}", false);
+        ASSERT_THROW(checkCode("d i(){{f*s=typeid(()0,)}}", false), InternalError);
     }
 
     void garbageCode171() {
@@ -1534,7 +1554,7 @@ private:
         ASSERT_THROW(checkCode("{((()))(return 1||);}"), InternalError);
     }
 
-    // #8709 - no garbarge but to avoid stability regression
+    // #8709 - no garbage but to avoid stability regression
     void garbageCode195() {
         checkCode("a b;\n"
                   "void c() {\n"
@@ -1589,7 +1609,29 @@ private:
     void garbageCode203() { // #8972
         checkCode("{ > () {} }");
         checkCode("template <> a > ::b();");
-        ASSERT_THROW(checkCode("{ template <a> class b { } template <> template <c> c() b<a>::e() { } template b<d>; }"), InternalError);
+    }
+
+    void garbageCode204() {
+        ASSERT_THROW(checkCode("template <a, = b<>()> c; template <a> a as() {} as<c<>>();"), InternalError);
+    }
+
+    void garbageCode205() {
+        checkCode("class CodeSnippetsEvent : public wxCommandEvent {\n"
+                  "public :\n"
+                  "    CodeSnippetsEvent ( wxEventType commandType =  wxEventType , int id = 0 ) ;\n"
+                  "    CodeSnippetsEvent ( const CodeSnippetsEvent & event ) ;\n"
+                  "virtual wxEvent * Clone ( ) const { return new CodeSnippetsEvent ( * this ) ; }\n"
+                  "private :\n"
+                  "    int m_SnippetID ;\n"
+                  "} ;\n"
+                  "const  wxEventType wxEVT_CODESNIPPETS_GETFILELINKS  =  wxNewEventType  (  )\n"
+                  "CodeSnippetsEvent :: CodeSnippetsEvent ( wxEventType commandType , int id )\n"
+                  ": wxCommandEvent ( commandType , id ) {\n"
+                  "}\n"
+                  "CodeSnippetsEvent :: CodeSnippetsEvent ( const CodeSnippetsEvent & Event )\n"
+                  ": wxCommandEvent ( Event )\n"
+                  ", m_SnippetID ( 0 ) {\n"
+                  "}"); // don't crash
     }
 
     void syntaxErrorFirstToken() {
@@ -1660,6 +1702,18 @@ private:
         ASSERT_THROW(checkCode("void f() { x= 'x' > typedef name5 | ( , ;){ } (); }"), InternalError); // #9067
         ASSERT_THROW(checkCode("void f() { x= {}( ) ( 'x')[ ] (); }"), InternalError); // #9068
         ASSERT_THROW(checkCode("void f() { x= y{ } name5 y[ ] + y ^ name5 ^ name5 for ( ( y y y && y y y && name5 ++ int )); }"), InternalError); // #9069
+    }
+
+    void cliCode() {
+        // #8913
+        /*
+        ASSERT_THROW(checkCode("public ref class LibCecSharp : public CecCallbackMethods {\n"
+                               "array<CecAdapter ^> ^ FindAdapters(String ^ path) {} \n"
+                               "bool GetDeviceInformation(String ^ port, LibCECConfiguration ^configuration, uint32_t timeoutMs) {\n"
+                               "bool bReturn(false);\n"
+                               "}\n"
+                               "};\n"), InternalError);
+                               */
     }
 
     void enumTrailingComma() {

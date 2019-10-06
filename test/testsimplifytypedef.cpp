@@ -80,8 +80,6 @@ private:
         TEST_CASE(simplifyTypedef36); // ticket #1434
         TEST_CASE(simplifyTypedef37); // ticket #1449
         TEST_CASE(simplifyTypedef38);
-        TEST_CASE(simplifyTypedef39);
-        TEST_CASE(simplifyTypedef40);
         TEST_CASE(simplifyTypedef43); // ticket #1588
         TEST_CASE(simplifyTypedef44);
         TEST_CASE(simplifyTypedef45); // ticket #1613
@@ -195,7 +193,7 @@ private:
         if (simplify)
             tokenizer.simplifyTokenList2();
 
-        return tokenizer.tokens()->stringifyList(0, !simplify);
+        return tokenizer.tokens()->stringifyList(nullptr, !simplify);
     }
 
     std::string simplifyTypedef(const char code[]) {
@@ -208,7 +206,7 @@ private:
         tokenizer.createLinks();
         tokenizer.simplifyTypedef();
 
-        return tokenizer.tokens()->stringifyList(0, false);
+        return tokenizer.tokens()->stringifyList(nullptr, false);
     }
 
     void checkSimplifyTypedef(const char code[]) {
@@ -1152,7 +1150,9 @@ private:
                                 "}";
 
         ASSERT_EQUALS(expected, tok(code, false));
-        ASSERT_EQUALS_WITHOUT_LINENUMBERS("[test.cpp:28]: (debug) valueflow.cpp:3109:valueFlowFunctionReturn bailout: function return; nontrivial function body\n", errout.str());
+        ASSERT_EQUALS_WITHOUT_LINENUMBERS(
+            "[test.cpp:28]: (debug) valueflow.cpp:3109:valueFlowFunctionReturn bailout: function return; nontrivial function body\n"
+            , errout.str());
     }
 
     void simplifyTypedef36() {
@@ -1186,23 +1186,6 @@ private:
         const char code[] = "typedef C A;\n"
                             "struct AB : public A, public B { };";
         const char expected[] = "struct AB : public C , public B { } ;";
-        ASSERT_EQUALS(expected, tok(code, false));
-        ASSERT_EQUALS("", errout.str());
-    }
-
-    void simplifyTypedef39() {
-        const char code[] = "typedef int A;\n"
-                            "template <const A, volatile A> struct S{};";
-        const char expected[] = "template < const int , volatile int > struct S { } ;";
-        ASSERT_EQUALS(expected, tok(code, false));
-        ASSERT_EQUALS("", errout.str());
-    }
-
-    void simplifyTypedef40() {
-        const char code[] = "typedef int A;\n"
-                            "typedef int B;\n"
-                            "template <class A, class B> class C { };";
-        const char expected[] = "template < class A , class B > class C { } ;";
         ASSERT_EQUALS(expected, tok(code, false));
         ASSERT_EQUALS("", errout.str());
     }
@@ -1676,7 +1659,7 @@ private:
                                 "( ( int ( * * ( * ) ( char * , char * , int , int ) ) ( ) ) global [ 6 ] ) ( \"assoc\" , \"eggdrop\" , 106 , 0 ) ; "
                                 "}";
         ASSERT_EQUALS(expected, tok(code));
-        ASSERT_EQUALS("", errout.str());
+        ASSERT_EQUALS_WITHOUT_LINENUMBERS("[test.cpp:3]: (debug) valueflow.cpp:1319:valueFlowTerminatingCondition bailout: Skipping function due to incomplete variable global\n", errout.str());
     }
 
     void simplifyTypedef68() { // ticket #2355
@@ -1883,7 +1866,7 @@ private:
                              "  B * b = new B;\n"
                              "  b->f = new A::F * [ 10 ];\n"
                              "}");
-        ASSERT_EQUALS("", errout.str());
+        ASSERT_EQUALS_WITHOUT_LINENUMBERS("[test.cpp:12]: (debug) valueflow.cpp:1319:valueFlowTerminatingCondition bailout: Skipping function due to incomplete variable idx\n", errout.str());
     }
 
     void simplifyTypedef83() { // ticket #2620
@@ -2215,8 +2198,7 @@ private:
 
     void simplifyTypedef106() { // ticket #3619 (segmentation fault)
         const char code[] = "typedef void f ();\ntypedef { f }";
-        tok(code);
-        ASSERT_EQUALS("", errout.str());
+        ASSERT_THROW(tok(code), InternalError);
     }
 
     void simplifyTypedef107() { // ticket #3963 (bad code => segmentation fault)
@@ -2239,8 +2221,8 @@ private:
 
     void simplifyTypedef109() {
         const char code[] = "typedef int&& rref;\n"
-                            "rref var;";
-        const char expected[] = "int & & var ;";
+                            "rref var = 0;";
+        const char expected[] = "int && var ; var = 0 ;";
         ASSERT_EQUALS(expected, tok(code));
         ASSERT_EQUALS("", errout.str());
     }
@@ -2547,8 +2529,7 @@ private:
                             "template <long, class> struct c; "
                             "template <int g> struct d { enum { e = c<g, b>::f }; };";
         const char exp [] = "class a ; "
-                            "template < long , class > struct c ; "
-                            "template < int g > struct d { enum Anonymous0 { e = c < g , int ( a :: * ) > :: f } ; } ;";
+                            "template < long , class > struct c ;";
         ASSERT_EQUALS(exp, tok(code, false));
     }
 

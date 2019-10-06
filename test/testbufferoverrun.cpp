@@ -150,6 +150,7 @@ private:
         TEST_CASE(array_index_valueflow_pointer);
         TEST_CASE(array_index_function_parameter);
         TEST_CASE(array_index_enum_array); // #8439
+        TEST_CASE(array_index_container); // #9386
 
         TEST_CASE(buffer_overrun_2_struct);
         TEST_CASE(buffer_overrun_3);
@@ -244,12 +245,14 @@ private:
         // TODO TEST_CASE(negativeMemoryAllocationSizeError) // #389
         TEST_CASE(negativeArraySize);
 
-        // TODO TEST_CASE(pointerAddition1);
+        TEST_CASE(pointerAddition1);
 
         TEST_CASE(ctu_malloc);
         TEST_CASE(ctu_array);
         TEST_CASE(ctu_variable);
         TEST_CASE(ctu_arithmetic);
+
+        TEST_CASE(objectIndex);
     }
 
 
@@ -2142,6 +2145,14 @@ private:
         ASSERT_EQUALS("[test.cpp:4]: (error) Array 'arrE[2]' accessed at index 8, which is out of bounds.\n", errout.str());
     }
 
+    void array_index_container() { // #9386
+        check("constexpr int blockLen = 10;\n"
+              "void foo(std::array<uint8_t, blockLen * 2>& a) {\n"
+              "    a[2] = 2;\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+    }
+
     void buffer_overrun_2_struct() {
         check("struct ABC\n"
               "{\n"
@@ -3721,6 +3732,20 @@ private:
               "}");
         ASSERT_EQUALS("[test.cpp:4]: (error) Buffer overrun possible for long command line arguments.\n", errout.str());
 
+        check("int main(int argc, const char *const *const argv, char **envp)\n"
+              "{\n"
+              "    char prog[10];\n"
+              "    strcpy(prog, argv[0]);\n"
+              "}");
+        ASSERT_EQUALS("[test.cpp:4]: (error) Buffer overrun possible for long command line arguments.\n", errout.str());
+
+        check("int main(const int argc, const char *const *const argv, const char *const *const envp)\n"
+              "{\n"
+              "    char prog[10];\n"
+              "    strcpy(prog, argv[0]);\n"
+              "}");
+        ASSERT_EQUALS("[test.cpp:4]: (error) Buffer overrun possible for long command line arguments.\n", errout.str());
+
         check("int main(int argc, char **argv, char **envp)\n"
               "{\n"
               "    char prog[10] = {'\\0'};\n"
@@ -3916,7 +3941,7 @@ private:
     void getErrorMessages() {
         // Ticket #2292: segmentation fault when using --errorlist
         CheckBufferOverrun c;
-        c.getErrorMessages(this, 0);
+        c.getErrorMessages(this, nullptr);
     }
 
     void arrayIndexThenCheck() {
@@ -4053,8 +4078,8 @@ private:
         check("void f() {\n"
               "    char arr[10];\n"
               "    p = arr + 20;\n"
-              "\n");
-        ASSERT_EQUALS("error", errout.str());
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:3]: (portability) Undefined behaviour, pointer arithmetic 'arr+20' is out of bounds.\n", errout.str());
     }
 
     void ctu(const char code[]) {
@@ -4176,6 +4201,19 @@ private:
             "    foo(p+1);\n"
             "}");
         ASSERT_EQUALS("", errout.str());
+
+        // #9112
+        ctu("static void get_mac_address(const u8 *strbuf)\n"
+            "{\n"
+            "    (strbuf[2]);\n"
+            "}\n"
+            "\n"
+            "static void program_mac_address(u32 mem_base)\n"
+            "{\n"
+            "    u8 macstrbuf[17] = { 0 };\n"
+            "    get_mac_address(macstrbuf);\n"
+            "}");
+        ASSERT_EQUALS("", errout.str());
     }
 
     void ctu_variable() {
@@ -4196,6 +4234,65 @@ private:
             "  dostuff(x);\n"
             "}");
         ASSERT_EQUALS("[test.cpp:4] -> [test.cpp:1]: (error) Pointer arithmetic overflow; 'p' buffer size is 12\n", errout.str());
+    }
+
+    void objectIndex() {
+        check("int f() { \n"
+              "    int i;\n"
+              "    return (&i)[1]; \n"
+              "}\n");
+        ASSERT_EQUALS(
+            "[test.cpp:3] -> [test.cpp:3]: (error) The address of local variable 'i' is accessed at non-zero index.\n",
+            errout.str());
+
+        check("int f(int j) { \n"
+              "    int i;\n"
+              "    return (&i)[j]; \n"
+              "}\n");
+        ASSERT_EQUALS(
+            "[test.cpp:3] -> [test.cpp:3]: (warning) The address of local variable 'i' might be accessed at non-zero index.\n",
+            errout.str());
+
+        check("int f() { \n"
+              "    int i;\n"
+              "    return (&i)[0]; \n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        check("int f(int * i) { \n"
+              "    return i[1]; \n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        check("int f(std::vector<int> i) { \n"
+              "    return i[1]; \n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        check("int f(std::vector<int> i) { \n"
+              "    return i.data()[1]; \n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        check("int* f(std::vector<int>& i) { \n"
+              "    return &(i[1]); \n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        check("struct A { int i; int j; };\n"
+              "int f() { \n"
+              "    A x;\n"
+              "    return (&x.i)[0]; \n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        check("struct A { int i; int j; };\n"
+              "int f() { \n"
+              "    A x;\n"
+              "    int * i = &x.i;\n"
+              "    return i[0]; \n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
     }
 };
 

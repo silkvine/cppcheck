@@ -21,23 +21,13 @@ CXX_OPT='-fsyntax-only -std=c++0x -Wno-format -Wno-format-security'
 CC=gcc
 CC_OPT='-Wno-format -Wno-nonnull -Wno-implicit-function-declaration -Wno-deprecated-declarations -Wno-format-security -Wno-nonnull -fsyntax-only'
 
-# Verify that unmatchedSuppression messages result in an error code
-set +e
-${CPPCHECK} ${CPPCHECK_OPT} ${DIR}unmatchedSuppressionTest.c
-CPPCHECK_RETURNCODE=$?
-set -e
-if [ ${CPPCHECK_RETURNCODE} -eq 0 ]; then
-    echo "Error: unmatchedSuppression must result in an exit code signaling an error!"
-    exit 1
-fi
-
 # posix.c
 ${CC} ${CC_OPT} ${DIR}posix.c
 ${CPPCHECK} ${CPPCHECK_OPT} --library=posix  ${DIR}posix.c
 
 # gnu.c
 ${CC} ${CC_OPT} -D_GNU_SOURCE ${DIR}gnu.c
-${CPPCHECK} ${CPPCHECK_OPT} --library=gnu ${DIR}gnu.c
+${CPPCHECK} ${CPPCHECK_OPT} --library=posix,gnu ${DIR}gnu.c
 
 # qt.cpp
 set +e
@@ -73,9 +63,9 @@ ${CPPCHECK} ${CPPCHECK_OPT} --library=bsd ${DIR}bsd.c
 
 # std.c
 ${CC} ${CC_OPT} ${DIR}std.c
-${CPPCHECK} ${CPPCHECK_OPT} ${DIR}std.c
+${CPPCHECK} ${CPPCHECK_OPT} --inconclusive ${DIR}std.c
 ${CXX} ${CXX_OPT} ${DIR}std.cpp
-${CPPCHECK} ${CPPCHECK_OPT} ${DIR}std.cpp
+${CPPCHECK} ${CPPCHECK_OPT} --inconclusive ${DIR}std.cpp
 
 # windows.cpp
 # Syntax check via g++ does not work because it can not find a valid windows.h
@@ -177,6 +167,118 @@ else
     fi
 fi
 ${CPPCHECK} ${CPPCHECK_OPT} --inconclusive --library=sqlite3 ${DIR}sqlite3.c
+
+# openmp.c
+${CC} ${CC_OPT} -fopenmp ${DIR}openmp.c
+${CPPCHECK} ${CPPCHECK_OPT} --library=openmp ${DIR}openmp.c
+
+# python.c
+set +e
+pkg-config --version
+PKGCONFIG_RETURNCODE=$?
+set -e
+if [ $PKGCONFIG_RETURNCODE -ne 0 ]; then
+    echo "pkg-config needed to retrieve Python 3 configuration is not available, skipping syntax check."
+else
+    set +e
+    PYTHON3CONFIG=$(pkg-config --cflags python3)
+    PYTHON3CONFIG_RETURNCODE=$?
+    set -e
+    if [ $PYTHON3CONFIG_RETURNCODE -eq 0 ]; then
+        set +e
+        echo -e "#include <Python.h>" | ${CC} ${CC_OPT} ${PYTHON3CONFIG} -x c -
+        PYTHON3CONFIG_RETURNCODE=$?
+        set -e
+        if [ $PYTHON3CONFIG_RETURNCODE -ne 0 ]; then
+            echo "Python 3 not completely present or not working, skipping syntax check with ${CC}."
+        else
+            echo "Python 3 found and working, checking syntax with ${CC} now."
+            ${CC} ${CC_OPT} ${PYTHON3CONFIG} ${DIR}python.c
+        fi
+    fi
+fi
+${CPPCHECK} ${CPPCHECK_OPT} --library=python ${DIR}python.c
+
+# lua.c
+set +e
+pkg-config --version
+PKGCONFIG_RETURNCODE=$?
+set -e
+if [ $PKGCONFIG_RETURNCODE -ne 0 ]; then
+    echo "pkg-config needed to retrieve Lua configuration is not available, skipping syntax check."
+else
+    set +e
+    LUACONFIG=$(pkg-config --cflags lua-5.3)
+    LUACONFIG_RETURNCODE=$?
+    set -e
+    if [ $LUACONFIG_RETURNCODE -eq 0 ]; then
+        set +e
+        echo -e "#include <lua.h>" | ${CC} ${CC_OPT} ${LUACONFIG} -x c -
+        LUACONFIG_RETURNCODE=$?
+        set -e
+        if [ $LUACONFIG_RETURNCODE -ne 0 ]; then
+            echo "Lua not completely present or not working, skipping syntax check with ${CC}."
+        else
+            echo "Lua found and working, checking syntax with ${CC} now."
+            ${CC} ${CC_OPT} ${LUACONFIG} ${DIR}lua.c
+        fi
+    fi
+fi
+${CPPCHECK} ${CPPCHECK_OPT} --library=lua ${DIR}lua.c
+
+# libcurl.c
+set +e
+pkg-config --version
+PKGCONFIG_RETURNCODE=$?
+set -e
+if [ $PKGCONFIG_RETURNCODE -ne 0 ]; then
+    echo "pkg-config needed to retrieve libcurl configuration is not available, skipping syntax check."
+else
+    set +e
+    LIBCURLCONFIG=$(pkg-config --cflags libcurl)
+    LIBCURLCONFIG_RETURNCODE=$?
+    set -e
+    if [ $LIBCURLCONFIG_RETURNCODE -eq 0 ]; then
+        set +e
+        echo -e "#include <curl/curl.h>" | ${CC} ${CC_OPT} ${LIBCURLCONFIG} -x c -
+        LIBCURLCONFIG_RETURNCODE=$?
+        set -e
+        if [ $LIBCURLCONFIG_RETURNCODE -ne 0 ]; then
+            echo "libcurl not completely present or not working, skipping syntax check with ${CC}."
+        else
+            echo "libcurl found and working, checking syntax with ${CC} now."
+            ${CC} ${CC_OPT} ${LIBCURLCONFIG} ${DIR}libcurl.c
+        fi
+    fi
+fi
+${CPPCHECK} ${CPPCHECK_OPT} --library=libcurl ${DIR}libcurl.c
+
+# cairo.c
+set +e
+pkg-config --version
+PKGCONFIG_RETURNCODE=$?
+set -e
+if [ $PKGCONFIG_RETURNCODE -ne 0 ]; then
+    echo "pkg-config needed to retrieve cairo configuration is not available, skipping syntax check."
+else
+    set +e
+    CAIROCONFIG=$(pkg-config --cflags cairo)
+    CAIROCONFIG_RETURNCODE=$?
+    set -e
+    if [ $CAIROCONFIG_RETURNCODE -eq 0 ]; then
+        set +e
+        echo -e "#include <cairo.h>" | ${CC} ${CC_OPT} ${CAIROCONFIG} -x c -
+        CAIROCONFIG_RETURNCODE=$?
+        set -e
+        if [ $CAIROCONFIG_RETURNCODE -ne 0 ]; then
+            echo "cairo not completely present or not working, skipping syntax check with ${CC}."
+        else
+            echo "cairo found and working, checking syntax with ${CC} now."
+            ${CC} ${CC_OPT} ${CAIROCONFIG} ${DIR}cairo.c
+        fi
+    fi
+fi
+${CPPCHECK} ${CPPCHECK_OPT} --library=cairo ${DIR}cairo.c
 
 # Check the syntax of the defines in the configuration files
 set +e

@@ -79,6 +79,7 @@ public:
         checkClass.checkExplicitConstructors();
         checkClass.checkCopyCtorAndEqOperator();
         checkClass.checkOverride();
+        checkClass.checkUnsafeClassRefMember();
     }
 
     /** @brief %Check that all class constructors are ok */
@@ -146,6 +147,9 @@ public:
     /** @brief Check that the override keyword is used when overriding virtual functions */
     void checkOverride();
 
+    /** @brief Unsafe class check - const reference member */
+    void checkUnsafeClassRefMember();
+
 private:
     const SymbolDatabase *mSymbolDatabase;
 
@@ -183,6 +187,7 @@ private:
     void copyCtorAndEqOperatorError(const Token *tok, const std::string &classname, bool isStruct, bool hasCopyCtor);
     void unsafeClassDivZeroError(const Token *tok, const std::string &className, const std::string &methodName, const std::string &varName);
     void overrideError(const Function *funcInBase, const Function *funcInDerived);
+    void unsafeClassRefMemberError(const Token *tok, const std::string &varname);
 
     void getErrorMessages(ErrorLogger *errorLogger, const Settings *settings) const OVERRIDE {
         CheckClass c(nullptr, settings, errorLogger);
@@ -220,6 +225,7 @@ private:
         c.pureVirtualFunctionCallInConstructorError(nullptr, std::list<const Token *>(), "f");
         c.virtualFunctionCallInConstructorError(nullptr, std::list<const Token *>(), "f");
         c.overrideError(nullptr, nullptr);
+        c.unsafeClassRefMemberError(nullptr, "UnsafeClass::var");
     }
 
     static std::string myName() {
@@ -285,7 +291,7 @@ private:
      * @param scope pointer to variable Scope
      * @param usage reference to usage vector
      */
-    static void assignVar(unsigned int varid, const Scope *scope, std::vector<Usage> &usage);
+    static void assignVar(nonneg int varid, const Scope *scope, std::vector<Usage> &usage);
 
     /**
      * @brief initialize a variable in the varlist
@@ -293,7 +299,7 @@ private:
      * @param scope pointer to variable Scope
      * @param usage reference to usage vector
      */
-    static void initVar(unsigned int varid, const Scope *scope, std::vector<Usage> &usage);
+    static void initVar(nonneg int varid, const Scope *scope, std::vector<Usage> &usage);
 
     /**
      * @brief set all variables in list assigned
@@ -317,7 +323,7 @@ private:
     void initializeVarList(const Function &func, std::list<const Function *> &callstack, const Scope *scope, std::vector<Usage> &usage);
 
     /**
-     * @brief gives a list of tokens where pure virtual functions are called directly or indirectly
+     * @brief gives a list of tokens where virtual functions are called directly or indirectly
      * @param function function to be checked
      * @param virtualFunctionCallsMap map of results for already checked functions
      * @return list of tokens where pure virtual functions are called
@@ -327,7 +333,7 @@ private:
         std::map<const Function *, std::list<const Token *> > & virtualFunctionCallsMap);
 
     /**
-     * @brief looks for the first pure virtual function call stack
+     * @brief looks for the first virtual function call stack
      * @param virtualFunctionCallsMap map of results obtained from getVirtualFunctionCalls
      * @param callToken token where pure virtual function is called directly or indirectly
      * @param[in,out] pureFuncStack list to append the stack

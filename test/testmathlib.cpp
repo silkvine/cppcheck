@@ -145,10 +145,15 @@ private:
         ASSERT_EQUALS("5.0",  MathLib::divide("25.5", "5.1"));
         ASSERT_EQUALS("7.0",  MathLib::divide("21.", "3"));
         ASSERT_EQUALS("1",    MathLib::divide("3", "2"));
-        ASSERT_THROW(MathLib::divide("123", "0"), InternalError); // throw
+        ASSERT_THROW(MathLib::divide("123", "0"), InternalError);  // decimal zero: throw
+        ASSERT_THROW(MathLib::divide("123", "00"), InternalError); // octal zero: throw
+        ASSERT_THROW(MathLib::divide("123", "0x0"), InternalError); // hex zero: throw
+        MathLib::divide("123", "0.0f"); // float zero: don't throw
+        MathLib::divide("123", "0.0"); // double zero: don't throw
+        MathLib::divide("123", "0.0L"); // long double zero: don't throw
         ASSERT_THROW(MathLib::divide("-9223372036854775808", "-1"), InternalError); // #4520 - out of range => throw
         ASSERT_EQUALS("4611686018427387904",  MathLib::divide("-9223372036854775808", "-2")); // #6679
-        MathLib::divide("123", "0.0"); // don't throw
+
 
         // Unknown action should throw exception
         ASSERT_THROW(MathLib::calculate("1","2",'j'),InternalError);
@@ -699,7 +704,7 @@ private:
         ASSERT_EQUALS(false, MathLib::isIntHex(""));
     }
 
-    void isValidIntegerSuffix(void) const {
+    void isValidIntegerSuffix() const {
         // negative testing
         ASSERT_EQUALS(false, MathLib::isValidIntegerSuffix(""));
         ASSERT_EQUALS(false, MathLib::isValidIntegerSuffix("ux"));
@@ -884,7 +889,7 @@ private:
         ASSERT_EQUALS("-inf.0", MathLib::divide("-3.0", "-0.0f")); // inf (#5142)
     }
 
-    void isdec(void) const {
+    void isdec() const {
         // positive testing
         ASSERT_EQUALS(true, MathLib::isDec("1"));
         ASSERT_EQUALS(true, MathLib::isDec("+1"));

@@ -32,6 +32,10 @@
 #include "tokenlist.h"
 #include "version.h"
 
+#include "exprengine.h"
+
+#define PICOJSON_USE_INT64
+#include <picojson.h>
 #include <simplecpp.h>
 #include <tinyxml2.h>
 #include <algorithm>
@@ -40,6 +44,8 @@
 #include <set>
 #include <stdexcept>
 #include <vector>
+#include <memory>
+#include <iostream> // <- TEMPORARY
 
 #ifdef HAVE_RULES
 #define PCRE_STATIC
@@ -53,6 +59,95 @@ static TimerResults S_timerResults;
 
 // CWE ids used
 static const CWE CWE398(398U);  // Indicator of Poor Code Quality
+
+namespace {
+    struct AddonInfo {
+        std::string name;
+        std::string scriptFile;
+        std::string args;
+
+        static std::string getFullPath(const std::string &fileName, const std::string &exename) {
+            if (Path::fileExists(fileName))
+                return fileName;
+
+            const std::string exepath = Path::getPathFromFilename(exename);
+            if (Path::fileExists(exepath + fileName))
+                return exepath + fileName;
+            if (Path::fileExists(exepath + "addons/" + fileName))
+                return exepath + "addons/" + fileName;
+
+#ifdef FILESDIR
+            if (Path::fileExists(FILESDIR + ("/" + fileName)))
+                return FILESDIR + ("/" + fileName);
+            if (Path::fileExists(FILESDIR + ("/addons/" + fileName)))
+                return FILESDIR + ("/addons/" + fileName);
+#endif
+            return "";
+        }
+
+        std::string getAddonInfo(const std::string &fileName, const std::string &exename) {
+            if (fileName.find(".") == std::string::npos)
+                return getAddonInfo(fileName + ".py", exename);
+
+            if (endsWith(fileName, ".py", 3)) {
+                scriptFile = getFullPath(fileName, exename);
+                if (scriptFile.empty())
+                    return "Did not find addon " + fileName;
+
+                std::string::size_type pos1 = scriptFile.rfind("/");
+                if (pos1 == std::string::npos)
+                    pos1 = 0;
+                else
+                    pos1++;
+                std::string::size_type pos2 = scriptFile.rfind(".");
+                if (pos2 < pos1)
+                    pos2 = std::string::npos;
+                name = scriptFile.substr(pos1, pos2 - pos1);
+
+                return "";
+            }
+
+            if (!endsWith(fileName, ".json", 5))
+                return "Failed to open addon " + fileName;
+
+            std::ifstream fin(fileName);
+            if (!fin.is_open())
+                return "Failed to open " + fileName;
+            picojson::value json;
+            fin >> json;
+            if (!json.is<picojson::object>())
+                return "Loading " + fileName + " failed. Bad json.";
+            picojson::object obj = json.get<picojson::object>();
+            if (obj.count("args")) {
+                if (!obj["args"].is<picojson::array>())
+                    return "Loading " + fileName + " failed. args must be array.";
+                for (const picojson::value &v : obj["args"].get<picojson::array>())
+                    args += " " + v.get<std::string>();
+            }
+
+            return getAddonInfo(obj["script"].get<std::string>(), exename);
+        }
+    };
+}
+
+static std::string executeAddon(const AddonInfo &addonInfo, const std::string &dumpFile)
+{
+    const std::string cmd = "python \"" + addonInfo.scriptFile + "\" --cli" + addonInfo.args + " \"" + dumpFile + "\"";
+
+#ifdef _WIN32
+    std::unique_ptr<FILE, decltype(&_pclose)> pipe(_popen(cmd.c_str(), "r"), _pclose);
+#else
+    std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd.c_str(), "r"), pclose);
+#endif
+    if (!pipe)
+        return "";
+    char buffer[1024];
+    std::string result;
+    while (fgets(buffer, sizeof(buffer), pipe.get()) != nullptr) {
+        result += buffer;
+    }
+    return result;
+}
 
 static std::vector<std::string> split(const std::string &str, const std::string &sep)
 {
@@ -128,7 +223,7 @@ unsigned int CppCheck::checkFile(const std::string& filename, const std::string 
     if (!Path::acceptFile(filename))
         mSettings.debugwarnings = false;
 
-    if (mSettings.terminated())
+    if (Settings::terminated())
         return mExitCode;
 
     if (!mSettings.quiet) {
@@ -160,7 +255,6 @@ unsigned int CppCheck::checkFile(const std::string& filename, const std::string 
 
     CheckUnusedFunctions checkUnusedFunctions(nullptr, nullptr, nullptr);
 
-    bool internalErrorFound(false);
     try {
         Preprocessor preprocessor(mSettings, this);
         std::set<std::string> configurations;
@@ -187,7 +281,7 @@ unsigned int CppCheck::checkFile(const std::string& filename, const std::string 
             };
 
             if (err) {
-                const ErrorLogger::ErrorMessage::FileLocation loc1(output.location.file(), output.location.line);
+                const ErrorLogger::ErrorMessage::FileLocation loc1(output.location.file(), output.location.line, output.location.col);
                 std::list<ErrorLogger::ErrorMessage::FileLocation> callstack(1, loc1);
 
                 ErrorLogger::ErrorMessage errmsg(callstack,
@@ -216,9 +310,16 @@ unsigned int CppCheck::checkFile(const std::string& filename, const std::string 
 
         // write dump file xml prolog
         std::ofstream fdump;
-        if (mSettings.dump) {
-            const std::string dumpfile(mSettings.dumpFile.empty() ? (filename + ".dump") : mSettings.dumpFile);
-            fdump.open(dumpfile);
+        std::string dumpFile;
+        if (mSettings.dump || !mSettings.addons.empty()) {
+            if (!mSettings.dumpFile.empty())
+                dumpFile = mSettings.dumpFile;
+            else if (!mSettings.dump && !mSettings.buildDir.empty())
+                dumpFile = AnalyzerInformation::getAnalyzerInfoFile(mSettings.buildDir, filename, "") + ".dump";
+            else
+                dumpFile = filename + ".dump";
+
+            fdump.open(dumpFile);
             if (fdump.is_open()) {
                 fdump << "<?xml version=\"1.0\"?>" << std::endl;
                 fdump << "<dumps>" << std::endl;
@@ -238,6 +339,7 @@ unsigned int CppCheck::checkFile(const std::string& filename, const std::string 
                     fdump << "    <tok "
                           << "fileIndex=\"" << tok->location.fileIndex << "\" "
                           << "linenr=\"" << tok->location.line << "\" "
+                          << "column=\"" << tok->location.col << "\" "
                           << "str=\"" << ErrorLogger::toxml(tok->str()) << "\""
                           << "/>" << std::endl;
                 }
@@ -247,7 +349,7 @@ unsigned int CppCheck::checkFile(const std::string& filename, const std::string 
 
         // Parse comments and then remove them
         preprocessor.inlineSuppressions(tokens1);
-        if (mSettings.dump && fdump.is_open()) {
+        if ((mSettings.dump || !mSettings.addons.empty()) && fdump.is_open()) {
             mSettings.nomsg.dump(fdump);
         }
         tokens1.removeComments();
@@ -330,7 +432,7 @@ unsigned int CppCheck::checkFile(const std::string& filename, const std::string 
         std::list<std::string> configurationError;
         for (const std::string &currCfg : configurations) {
             // bail out if terminated
-            if (mSettings.terminated())
+            if (Settings::terminated())
                 break;
 
             // Check only a few configurations (default 12), after that bail out, unless --force
@@ -371,7 +473,7 @@ unsigned int CppCheck::checkFile(const std::string& filename, const std::string 
             }
 
             Tokenizer mTokenizer(&mSettings, this);
-            if (mSettings.showtime != SHOWTIME_NONE)
+            if (mSettings.showtime != SHOWTIME_MODES::SHOWTIME_NONE)
                 mTokenizer.setTimerResults(&S_timerResults);
 
             try {
@@ -409,8 +511,12 @@ unsigned int CppCheck::checkFile(const std::string& filename, const std::string 
                     continue;
 
                 // dump xml if --dump
-                if (mSettings.dump && fdump.is_open()) {
+                if ((mSettings.dump || !mSettings.addons.empty()) && fdump.is_open()) {
                     fdump << "<dump cfg=\"" << ErrorLogger::toxml(mCurrentConfig) << "\">" << std::endl;
+                    fdump << "  <standards>" << std::endl;
+                    fdump << "    <c version=\"" << mSettings.standards.getC() << "\"/>" << std::endl;
+                    fdump << "    <cpp version=\"" << mSettings.standards.getCPP() << "\"/>" << std::endl;
+                    fdump << "  </standards>" << std::endl;
                     preprocessor.dump(fdump);
                     mTokenizer.dump(fdump);
                     fdump << "</dump>" << std::endl;
@@ -443,7 +549,7 @@ unsigned int CppCheck::checkFile(const std::string& filename, const std::string 
                     if (!result)
                         continue;
 
-                    if (!mSettings.terminated())
+                    if (!Settings::terminated())
                         executeRules("simple", mTokenizer);
                 }
 
@@ -455,19 +561,15 @@ unsigned int CppCheck::checkFile(const std::string& filename, const std::string 
 
             } catch (const InternalError &e) {
                 std::list<ErrorLogger::ErrorMessage::FileLocation> locationList;
-                ErrorLogger::ErrorMessage::FileLocation loc;
                 if (e.token) {
-                    loc.line = e.token->linenr();
-                    loc.col = e.token->col();
-                    const std::string fixedpath = Path::toNativeSeparators(mTokenizer.list.file(e.token));
-                    loc.setfile(fixedpath);
+                    ErrorLogger::ErrorMessage::FileLocation loc(e.token, &mTokenizer.list);
+                    locationList.push_back(loc);
                 } else {
-                    ErrorLogger::ErrorMessage::FileLocation loc2;
-                    loc2.setfile(Path::toNativeSeparators(filename));
+                    ErrorLogger::ErrorMessage::FileLocation loc(mTokenizer.list.getSourceFilePath(), 0, 0);
+                    ErrorLogger::ErrorMessage::FileLocation loc2(filename, 0, 0);
                     locationList.push_back(loc2);
-                    loc.setfile(mTokenizer.list.getSourceFilePath());
+                    locationList.push_back(loc);
                 }
-                locationList.push_back(loc);
                 ErrorLogger::ErrorMessage errmsg(locationList,
                                                  mTokenizer.list.getSourceFilePath(),
                                                  Severity::error,
@@ -475,11 +577,8 @@ unsigned int CppCheck::checkFile(const std::string& filename, const std::string 
                                                  e.id,
                                                  false);
 
-                if (errmsg._severity == Severity::error || mSettings.isEnabled(errmsg._severity)) {
+                if (errmsg.severity == Severity::error || mSettings.isEnabled(errmsg.severity))
                     reportErr(errmsg);
-                    if (!mSuppressInternalErrorFound)
-                        internalErrorFound = true;
-                }
             }
         }
 
@@ -504,8 +603,56 @@ unsigned int CppCheck::checkFile(const std::string& filename, const std::string 
         }
 
         // dumped all configs, close root </dumps> element now
-        if (mSettings.dump && fdump.is_open())
+        if ((mSettings.dump || !mSettings.addons.empty()) && fdump.is_open())
             fdump << "</dumps>" << std::endl;
+
+        if (!mSettings.addons.empty()) {
+            fdump.close();
+
+            for (const std::string &addon : mSettings.addons) {
+                struct AddonInfo addonInfo;
+                const std::string &failedToGetAddonInfo = addonInfo.getAddonInfo(addon, mSettings.exename);
+                if (!failedToGetAddonInfo.empty()) {
+                    reportOut(failedToGetAddonInfo);
+                    continue;
+                }
+                const std::string results = executeAddon(addonInfo, dumpFile);
+                std::istringstream istr(results);
+                std::string line;
+
+                while (std::getline(istr, line)) {
+                    if (line.compare(0,1,"{") != 0)
+                        continue;
+
+                    picojson::value res;
+                    std::istringstream istr2(line);
+                    istr2 >> res;
+                    if (!res.is<picojson::object>())
+                        continue;
+
+                    picojson::object obj = res.get<picojson::object>();
+
+                    const std::string fileName = obj["file"].get<std::string>();
+                    const int64_t lineNumber = obj["linenr"].get<int64_t>();
+                    const int64_t column = obj["column"].get<int64_t>();
+
+                    ErrorLogger::ErrorMessage errmsg;
+
+                    errmsg.callStack.emplace_back(ErrorLogger::ErrorMessage::FileLocation(fileName, lineNumber, column));
+
+                    errmsg.id = obj["addon"].get<std::string>() + "-" + obj["errorId"].get<std::string>();
+                    const std::string text = obj["message"].get<std::string>();
+                    errmsg.setmsg(text);
+                    const std::string severity = obj["severity"].get<std::string>();
+                    errmsg.severity = Severity::fromString(severity);
+                    if (errmsg.severity == Severity::SeverityType::none)
+                        continue;
+                    errmsg.file0 = fileName;
+
+                    reportErr(errmsg);
+                }
+            }
+        }
 
     } catch (const std::runtime_error &e) {
         internalError(filename, e.what());
@@ -526,9 +673,6 @@ unsigned int CppCheck::checkFile(const std::string& filename, const std::string 
     }
 
     mErrorList.clear();
-    if (internalErrorFound && (mExitCode==0)) {
-        mExitCode = 1;
-    }
 
     return mExitCode;
 }
@@ -539,7 +683,7 @@ void CppCheck::internalError(const std::string &filename, const std::string &msg
     const std::string fullmsg("Bailing out from checking " + fixedpath + " since there was an internal error: " + msg);
 
     if (mSettings.isEnabled(Settings::INFORMATION)) {
-        const ErrorLogger::ErrorMessage::FileLocation loc1(filename, 0);
+        const ErrorLogger::ErrorMessage::FileLocation loc1(filename, 0, 0);
         std::list<ErrorLogger::ErrorMessage::FileLocation> callstack(1, loc1);
 
         ErrorLogger::ErrorMessage errmsg(callstack,
@@ -573,14 +717,19 @@ void CppCheck::checkNormalTokens(const Tokenizer &tokenizer)
 {
     // call all "runChecks" in all registered Check classes
     for (Check *check : Check::instances()) {
-        if (mSettings.terminated())
+        if (Settings::terminated())
             return;
 
-        if (tokenizer.isMaxTime())
+        if (Tokenizer::isMaxTime())
             return;
 
         Timer timerRunChecks(check->name() + "::runChecks", mSettings.showtime, &S_timerResults);
         check->runChecks(&tokenizer, &mSettings, this);
+    }
+
+    // Verification using ExprEngine..
+    if (mSettings.verification) {
+        ExprEngine::runChecks(this, &tokenizer, &mSettings);
     }
 
     // Analyse the tokens..
@@ -980,8 +1129,9 @@ void CppCheck::reportErr(const ErrorLogger::ErrorMessage &msg)
         }
     }
 
-    if (!mSettings.nofail.isSuppressed(errorMessage) && (mUseGlobalSuppressions || !mSettings.nomsg.isSuppressed(errorMessage)))
+    if (!mSettings.nofail.isSuppressed(errorMessage) && !mSettings.nomsg.isSuppressed(errorMessage)) {
         mExitCode = 1;
+    }
 
     mErrorList.push_back(errmsg);
 
